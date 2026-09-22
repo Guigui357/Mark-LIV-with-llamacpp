@@ -48,6 +48,8 @@ import sounddevice as sd
 import numpy as np
 from google import genai
 from google.genai import types
+from core.local_session import LocalSession
+from core.local_ai import speak_local
 from ui import JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
@@ -831,6 +833,8 @@ class JarvisLive:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        self.ui.write_log(f"You: {text}")
+        self._session_log.append(f"User: {text}")
         # Respect wake-word sleep: a typed command must not be answered while
         # asleep either (the sleep gate is not just for the mic). Wake first with
         # "Hey Jarvis" or the WAKE NOW button.
@@ -1552,6 +1556,10 @@ class JarvisLive:
                             if full_out:
                                 self._last_out_logged = full_out
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
+                                if isinstance(self.session, LocalSession):
+                                    self.set_speaking(True)
+                                    await asyncio.to_thread(speak_local, full_out)
+                                    self.set_speaking(False)
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
@@ -2041,6 +2049,55 @@ class JarvisLive:
                 await asyncio.sleep(0.5)
 
     # ── main loop ───────────────────────────────────────────────────────────
+
+    async def _run_local(self):
+        """Run Mark-LIV entirely against the local llama.cpp server."""
+        self._loop = asyncio.get_event_loop()
+        self._reconnect_event = asyncio.Event()
+
+        confirm_gate.bind(
+            show=self.ui.show_confirm, hide=self.ui.hide_confirm, log=self.ui.write_log
+        )
+        set_trim_notifier(self.ui.write_log)
+
+        all_decls = (
+            TOOL_DECLARATIONS
+            + self._action_registry.get_tool_declarations()
+            + self._plugin_registry.get_tool_declarations()
+        )
+
+        try:
+            cfg = self._build_config()
+            system_prompt = getattr(cfg, "system_instruction", "") or _load_system_prompt()
+        except Exception as e:
+            print(f"[JARVIS] Local prompt build fallback: {e}")
+            system_prompt = _load_system_prompt()
+
+        from core.local_ai import LocalAI
+        probe = LocalAI()
+        if not await asyncio.to_thread(probe.health):
+            self.ui.write_log(
+                "ERR: llama-server não está disponível em " + probe.base_url
+            )
+            self.ui.set_state("SLEEPING")
+            return
+
+        self.session = LocalSession(system_prompt, all_decls)
+        self.audio_in_queue = asyncio.Queue()
+        self.out_queue = asyncio.Queue(maxsize=1)
+        self._turn_done_event = asyncio.Event()
+        self._awake = True
+        self.ui.set_state("LISTENING")
+        self.ui.write_log(
+            "SYS: JARVIS online — IA local via llama.cpp. Nenhuma chave Gemini é usada."
+        )
+
+        try:
+            await self._receive_audio()
+        finally:
+            if self.session:
+                await self.session.close()
+            self.session = None
 
     async def run(self):
         self._loop = asyncio.get_event_loop()
