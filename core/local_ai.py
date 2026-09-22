@@ -84,7 +84,7 @@ class LocalAIError(RuntimeError):
 
 
 class LocalAI:
-    """Small HTTP client for llama-server's OpenAI-compatible local API."""
+    """Small HTTP client for llama.cpp's OpenAI-compatible local API."""
 
     def __init__(self, base_url: str | None = None, model: str | None = None):
         self.base_url = (base_url or local_url()).rstrip("/")
@@ -119,7 +119,7 @@ class LocalAI:
             return r.json()
         except requests.RequestException as e:
             raise LocalAIError(
-                f"Não foi possível falar com llama-server em {self.base_url}: {e}"
+                f"Não foi possível falar com llama.cpp em {self.base_url}: {e}"
             ) from e
 
 
