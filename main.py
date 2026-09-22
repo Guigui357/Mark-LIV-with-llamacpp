@@ -1497,6 +1497,63 @@ class JarvisLive:
                 await self.session.close()
             self.session = None
 
+    async def _receive_audio(self):
+        """Consume local llama.cpp responses, execute tools, and speak replies locally."""
+        if not self.session:
+            return
+
+        while self.session and not self.session.closed:
+            try:
+                response = await self.session.receive()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.ui.write_log(f"ERR: Local receive: {e}")
+                await asyncio.sleep(0.2)
+                continue
+
+            # LocalSession emits function calls in the same shape the old
+            # receive loop expected from the Live API.
+            tool_call = getattr(response, "tool_call", None)
+            if tool_call is not None:
+                calls = getattr(tool_call, "function_calls", []) or []
+                results = []
+                for fc in calls:
+                    try:
+                        results.append(await self._execute_tool(fc))
+                    except Exception as e:
+                        print(f"[JARVIS] Tool execution error: {e}")
+                        traceback.print_exc()
+                        results.append(SimpleNamespace(
+                            id=getattr(fc, "id", ""),
+                            name=getattr(fc, "name", ""),
+                            response={"result": f"Tool failed: {e}"},
+                        ))
+                if self.session and results:
+                    await self.session.send_tool_response(results)
+                continue
+
+            server_content = getattr(response, "server_content", None)
+            if server_content is None:
+                continue
+
+            output = getattr(server_content, "output_transcription", None)
+            text = _clean_transcript(getattr(output, "text", "") if output else "")
+            if text:
+                self._session_log.append(f"JARVIS: {text}")
+                self.ui.write_log(f"JARVIS: {text}")
+                self.ui.set_state("SPEAKING")
+                try:
+                    await asyncio.to_thread(speak_local, text)
+                except Exception as e:
+                    self.ui.write_log(f"ERR: TTS local: {e}")
+                finally:
+                    if self.session and not self.ui.muted:
+                        self.ui.set_state("LISTENING")
+
+            if getattr(server_content, "turn_complete", False):
+                self._turn_done_event.set()
+
     async def _listen_local_audio(self):
         """Capture microphone audio locally and transcribe with whisper.cpp."""
         from core.local_stt import LocalMic, transcribe
