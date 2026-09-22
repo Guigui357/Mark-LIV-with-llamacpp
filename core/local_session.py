@@ -141,6 +141,12 @@ class LocalSession:
                 data=None, server_content=sc, tool_call=None
             ))
 
+    async def receive(self):
+        """Wait for and return the next local AI event."""
+        if self.closed:
+            return SimpleNamespace(data=None, server_content=None, tool_call=None)
+        return await self._queue.get()
+
     async def send_tool_response(self, function_responses=None):
         for fr in function_responses or []:
             fid = getattr(fr, "id", "")
