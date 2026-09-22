@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$ROOT/models"
 
 echo "[1/3] Checking llama.cpp..."
-command -v llama-server >/dev/null || {
-  echo "llama-server não encontrado. Instale/build o llama.cpp primeiro."
+command -v llama >/dev/null || {
+  echo "llama não encontrado. Instale/build o llama.cpp primeiro."
   exit 1
 }
 
@@ -25,7 +25,7 @@ fi
 
 echo
 echo "OK. Runtime local:"
-echo "  LLM : llama-server"
+echo "  LLM : llama serve"
 echo "  STT : whisper.cpp"
 echo "  TTS : Piper (se MARK_LIV_PIPER_MODEL estiver definido) ou engine local"
 echo
