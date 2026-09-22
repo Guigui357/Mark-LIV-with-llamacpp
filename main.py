@@ -2100,6 +2100,10 @@ class JarvisLive:
             self.session = None
 
     async def run(self):
+        # Local-first build: Gemini Live remains below as legacy code, but is not used.
+        await self._run_local()
+        return
+
         self._loop = asyncio.get_event_loop()
         self._reconnect_event = asyncio.Event()
 
