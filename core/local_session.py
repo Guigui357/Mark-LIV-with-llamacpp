@@ -26,11 +26,85 @@ class LocalSession:
     def __init__(self, system_prompt: str, declarations: list[dict]):
         self.client = LocalAI()
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        self.tools = to_openai_tools(declarations)
+        # Keep declarations available locally, but do not send every schema on
+        # every turn. On a 1.5B model, schemas can consume most of the context.
+        self._declarations = [d for d in (declarations or []) if isinstance(d, dict)]
+        self.tools: list[dict] = []
         self._queue: asyncio.Queue = asyncio.Queue()
         self._worker: asyncio.Task | None = None
         self._pending_tool_calls: list[dict] = []
         self.closed = False
+
+    @staticmethod
+    def _tool_text(declaration: dict) -> str:
+        return " ".join([
+            str(declaration.get("name") or ""),
+            str(declaration.get("description") or ""),
+        ]).lower()
+
+    def _select_tools(self, user_text: str) -> list[dict]:
+        """Select only tools relevant to the current user turn."""
+        text = str(user_text or "").lower()
+        if not text:
+            return []
+
+        action_words = (
+            "abrir", "abre", "fechar", "fecha", "executar", "rodar", "iniciar",
+            "parar", "criar", "apagar", "deletar", "mover", "renomear", "salvar",
+            "lembrar", "lembre", "esquecer", "desfazer", "voltar", "cancelar",
+            "ver", "mostrar", "olhar", "capturar", "tela", "câmera", "camera",
+            "microfone", "wifi", "wi-fi", "internet", "volume", "brilho",
+            "cpu", "ram", "memória", "memoria", "temperatura", "monitor",
+            "arquivo", "pasta", "navegador", "browser", "pesquisar", "buscar",
+            "notícia", "noticias", "news", "email", "mensagem", "download",
+            "upload", "ligar", "desligar", "reiniciar", "shutdown",
+        )
+        if not any(word in text for word in action_words):
+            return []
+
+        aliases = {
+            "memory": ("lembrar", "lembre", "memória", "memoria", "esquecer"),
+            "screen": ("tela", "capturar", "mostrar", "olhar"),
+            "camera": ("câmera", "camera"),
+            "system": ("cpu", "ram", "memória", "memoria", "temperatura"),
+            "wifi": ("wifi", "wi-fi", "internet"),
+            "volume": ("volume",),
+            "brightness": ("brilho",),
+            "file": ("arquivo", "pasta", "salvar", "apagar", "deletar", "mover", "renomear"),
+            "browser": ("navegador", "browser", "pesquisar", "buscar"),
+            "web": ("pesquisar", "buscar", "notícia", "noticias", "news"),
+            "email": ("email",),
+            "message": ("mensagem",),
+            "download": ("download",),
+            "upload": ("upload",),
+            "undo": ("desfazer", "voltar", "cancelar"),
+            "open": ("abrir", "abre", "iniciar", "executar", "rodar"),
+            "close": ("fechar", "fecha", "parar", "desligar"),
+            "shutdown": ("reiniciar", "shutdown"),
+        }
+
+        scored = []
+        for d in self._declarations:
+            name = str(d.get("name") or "").lower()
+            hay = self._tool_text(d)
+            score = 0
+
+            # Exact/partial tool-name matches are strong signals.
+            for word in action_words:
+                if word in name:
+                    score += 4
+                elif word in hay:
+                    score += 1
+
+            for alias, terms in aliases.items():
+                if any(term in text for term in terms) and alias in hay:
+                    score += 8
+
+            if score:
+                scored.append((score, d))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [d for _, d in scored[:10]]
 
     @staticmethod
     def _content(turns: Any) -> str | list:
@@ -70,6 +144,8 @@ class LocalSession:
         if not content:
             return
         self.messages.append({"role": role, "content": content})
+        if role == "user" and isinstance(content, str):
+            self.tools = to_openai_tools(self._select_tools(content))
         if turn_complete:
             await self._start_generation()
 
