@@ -124,15 +124,41 @@ class LocalAI:
 
 
 def speak_local(text: str) -> bool:
-    """Best-effort offline TTS using an already-installed OS speech engine."""
     text = " ".join(str(text or "").split()).strip()
     if not text:
         return False
 
+    # Piper is fully offline and produces natural neural speech.
+    piper = os.getenv("MARK_LIV_PIPER_BIN") or shutil.which("piper")
+    piper_model = os.getenv("MARK_LIV_PIPER_MODEL")
+    if piper and piper_model and Path(piper_model).exists():
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory(prefix="markliv-tts-") as td:
+                wav = str(Path(td) / "speech.wav")
+                p = subprocess.run(
+                    [piper, "--model", piper_model, "--output_file", wav],
+                    input=text, text=True, capture_output=True, check=False,
+                )
+                if p.returncode == 0 and Path(wav).exists():
+                    import sounddevice as sd
+                    import wave
+                    with wave.open(wav, "rb") as f:
+                        data = f.readframes(f.getnframes())
+                        rate = f.getframerate()
+                        channels = f.getnchannels()
+                    import numpy as np
+                    pcm = np.frombuffer(data, dtype=np.int16)
+                    if channels > 1:
+                        pcm = pcm.reshape(-1, channels)
+                    sd.play(pcm, rate, blocking=True)
+                    return True
+        except Exception:
+            pass
+
     system = platform.system()
     try:
         if system == "Windows":
-            # System.Speech is part of Windows/.NET; no cloud service is used.
             escaped = text.replace("'", "''")
             script = (
                 "Add-Type -AssemblyName System.Speech; "
