@@ -2093,11 +2093,61 @@ class JarvisLive:
         )
 
         try:
-            await self._receive_audio()
+            await asyncio.gather(
+                self._receive_audio(),
+                self._listen_local_audio(),
+            )
         finally:
             if self.session:
                 await self.session.close()
             self.session = None
+
+    async def _listen_local_audio(self):
+        """Capture microphone audio locally and transcribe with whisper.cpp."""
+        from core.local_stt import LocalMic, transcribe
+
+        mic = LocalMic(
+            wake_enabled=self._wake_enabled,
+            wake_detector=self._wake_detector,
+            awake=self._awake,
+        )
+        try:
+            name = await asyncio.to_thread(mic.open)
+            self.ui.write_log(f"SYS: Microfone local ativo: {name or 'sistema padrão'}")
+            while self.session:
+                mic.awake = self._awake
+                mic.wake_enabled = self._wake_enabled
+
+                if self._ptt_enabled and not self._ptt_held:
+                    await asyncio.sleep(0.05)
+                    continue
+
+                pcm = await asyncio.to_thread(mic.read_segment)
+                if not pcm or not self.session:
+                    continue
+
+                try:
+                    text = await asyncio.to_thread(transcribe, pcm)
+                except Exception as e:
+                    self.ui.write_log(f"ERR: STT local: {e}")
+                    continue
+
+                text = " ".join(text.split()).strip()
+                if not text:
+                    continue
+
+                self._last_user_speech = time.monotonic()
+                self.ui.set_audio_level(0.0)
+                self.ui.write_log(f"STT local: {text}")
+
+                # Everything after transcription remains inside the machine:
+                # LocalSession -> llama-server -> local tools.
+                await self.session.send_client_content(
+                    turns={"role": "user", "parts": [{"text": text}]},
+                    turn_complete=True,
+                )
+        finally:
+            await asyncio.to_thread(mic.close)
 
     async def run(self):
         # Local-first build: Gemini Live remains below as legacy code, but is not used.
