@@ -1410,7 +1410,7 @@ class SetupOverlay(QWidget):
         layout.addWidget(_lbl("LOCAL LLAMA.CPP SERVER", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._key_input = QLineEdit()
-        self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_input.setEchoMode(QLineEdit.EchoMode.Normal)
         self._key_input.setPlaceholderText("http://127.0.0.1:8080/v1  (default)")
         self._key_input.setFont(QFont("Courier New", 10))
         self._key_input.setFixedHeight(32)
