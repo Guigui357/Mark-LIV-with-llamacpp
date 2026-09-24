@@ -1,1 +1,7 @@
-"""Mark-LIV CLI entry point. The graphical UI is no longer used."""\n\nfrom cli import main\n\n\nif __name__ == "__main__":\n    main()\n
+"""Mark-LIV CLI entry point. The graphical UI is no longer used."""
+
+from cli import main
+
+
+if __name__ == "__main__":
+    main()
